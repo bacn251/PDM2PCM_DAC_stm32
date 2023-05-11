@@ -165,7 +165,6 @@ int main(void)
   HAL_I2S_Transmit_DMA(&hi2s3, (uint16_t *)&txBuf[0], 128);
   HAL_I2S_Receive_DMA(&hi2s2, &pdmRxBuf[0], 128);
 
-  //HAL_I2S_Receive(&hi2s2, &recvPDMBuf[0], BUF_LEN, 100);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -175,11 +174,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    //cs43l22_Init(AUDIO_I2C_ADDRESS, OUTPUT_DEVICE_HEADPHONE, 100, AUDIO_FREQUENCY_48K);
-    //HAL_I2S_Receive(&hi2s2, &recvPDMBuf[0], BUF_LEN, 100);
-    /* process current frame */
-
-    //PDM_Filter(&recvPDMBuf[0], &pcm_buffer[0], &PDM1_filter_handler);
     if (rxstate==1) {
       PDM_Filter(&pdmRxBuf[0],&MidBuffer[0], &PDM1_filter_handler);
       for (int i=0; i<32;i++) { FifoWrite(MidBuffer[i]); }
