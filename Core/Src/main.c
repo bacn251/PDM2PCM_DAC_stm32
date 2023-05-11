@@ -174,42 +174,54 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (rxstate==1) {
-      PDM_Filter(&pdmRxBuf[0],&MidBuffer[0], &PDM1_filter_handler);
-      for (int i=0; i<32;i++) { FifoWrite(MidBuffer[i]); }
-      if (fifo_w_ptr-fifo_r_ptr > 128) fifo_read_enabled=1;
-      rxstate=0;
-
-    }
-
-    if (rxstate==2) {
-      PDM_Filter(&pdmRxBuf[64],&MidBuffer[0], &PDM1_filter_handler);
-      for (int i=0; i<32;i++) { FifoWrite(MidBuffer[i]); }
-      rxstate=0;
-
-    }
-
-    if (txstate==1) {
-      if (fifo_read_enabled==1) {
-      for (int i=0; i<64;i=i+2) {
-        int16_t data = FifoRead();
-        txBuf[i] = data;
-        txBuf[i+1] = data;
+    if (rxstate == 1)
+    {
+      PDM_Filter (&pdmRxBuf[0], &MidBuffer[0], &PDM1_filter_handler);
+      for (int i = 0; i < 32; i++)
+      {
+        FifoWrite (MidBuffer[i]);
       }
-      }
-      txstate=0;
+      if (fifo_w_ptr - fifo_r_ptr > 128)
+        fifo_read_enabled = 1;
+      rxstate = 0;
     }
 
-    if (txstate==2) {
-      if (fifo_read_enabled==1) {
-      for (int i=64; i<128;i=i+2) {
-        int16_t data = FifoRead();
-        txBuf[i] = data;
-        txBuf[i+1] = data;
+    if (rxstate == 2)
+    {
+      PDM_Filter (&pdmRxBuf[64], &MidBuffer[0], &PDM1_filter_handler);
+      for (int i = 0; i < 32; i++)
+      {
+        FifoWrite (MidBuffer[i]);
       }
-
+      rxstate = 0;
     }
-      txstate=0;
+
+    if (txstate == 1)
+    {
+      if (fifo_read_enabled == 1)
+      {
+        for (int i = 0; i < 64; i = i + 2)
+        {
+          int16_t data = FifoRead ();
+          txBuf[i] = data;
+          txBuf[i + 1] = data;
+        }
+      }
+      txstate = 0;
+    }
+
+    if (txstate == 2)
+    {
+      if (fifo_read_enabled == 1)
+      {
+        for (int i = 64; i < 128; i = i + 2)
+        {
+          int16_t data = FifoRead ();
+          txBuf[i] = data;
+          txBuf[i + 1] = data;
+        }
+      }
+      txstate = 0;
     }
   }
   /* USER CODE END 3 */
@@ -560,19 +572,23 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_I2S_TxHalfCpltCallback (I2S_HandleTypeDef *hi2s) {
+void HAL_I2S_TxHalfCpltCallback (I2S_HandleTypeDef *hi2s)
+{
   txstate = 1;
 }
 
-void HAL_I2S_TxCpltCallback (I2S_HandleTypeDef *hi2s) {
+void HAL_I2S_TxCpltCallback (I2S_HandleTypeDef *hi2s)
+{
   txstate = 2;
 }
 
-void HAL_I2S_RxHalfCpltCallback (I2S_HandleTypeDef *hi2s) {
+void HAL_I2S_RxHalfCpltCallback (I2S_HandleTypeDef *hi2s)
+{
   rxstate = 1;
 }
 
-void HAL_I2S_RxCpltCallback (I2S_HandleTypeDef *hi2s) {
+void HAL_I2S_RxCpltCallback (I2S_HandleTypeDef *hi2s)
+{
   rxstate = 2;
 }
 /* USER CODE END 4 */
