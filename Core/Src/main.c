@@ -57,6 +57,13 @@ volatile uint8_t button_flag, start_stop_recording;
 volatile uint8_t half_i2s, full_i2s;
 float output_buffer[WAV_WRITE_SAMPLE_COUNT / 4];
 float magnitude_buffer[WAV_WRITE_SAMPLE_COUNT / 4];
+#define FFT_SIZE 1024
+#define SAMPLE_RATE 48000.0f
+const float target_frequencies[] = {31.5f, 63.0f, 125.0f, 250.0f, 500.0f, 1000.0f, 2200.0f, 4500.0f, 9000.0f, 15000.0f};
+float fft_out_buf[FFT_SIZE];
+float vrms_buffer[10];
+uint8_t uartfree = 1;
+uint8_t outarray[14];
 arm_rfft_fast_instance_f32 fft_instance;
 /* USER CODE END PM */
 
@@ -118,16 +125,89 @@ int16_t FifoRead()
   fifo_r_ptr++;
   return val;
 }
+int find_bin(float frequency)
+{
+  return (int)((frequency * FFT_SIZE) / SAMPLE_RATE);
+}
+float calculate_db_range(const float *fft_output, int start_bin, int end_bin)
+{
+    float magnitude_sum = 0.0f;
+
+    // Tính tổng năng lượng trong dải bin
+    for (int i = start_bin; i <= end_bin; i++)
+    {
+        float real = fft_output[2 * i];     // Phần thực
+        float imag = fft_output[2 * i + 1]; // Phần ảo
+        magnitude_sum += sqrtf(real * real + imag * imag);
+    }
+
+    // Trung bình magnitude và chuyển đổi sang dB
+    float average_magnitude = magnitude_sum / (end_bin - start_bin + 1);
+    return 20.0f * log10f(average_magnitude);
+}
+float complexABS(float real, float compl )
+{
+  return sqrtf(real * real + compl *compl );
+}
+void process_fft_target_vrms(float32_t *fft_in_buf)
+{
+  arm_rfft_fast_f32(&fft_instance, fft_in_buf, fft_out_buf, 0);
+//  int freqs[1024];
+//    int freqpoint = 0;
+//    int offset = 150; // variable noisefloor offset
+//
+//    // calculate abs values and linear-to-dB
+//    for (int i = 0; i < 2048; i = i + 2)
+//    {
+//      freqs[freqpoint] = (int)(20 * log10f(complexABS(fft_out_buf[i], fft_out_buf[i + 1]))) - offset;
+//      if (freqs[freqpoint] < 0)
+//        freqs[freqpoint] = 0;
+//      freqpoint++;
+//    }
+//    // push out data to Uart
+//      outarray[0] = 0xff;                 // frame start
+//      outarray[1] = (uint8_t)freqs[1];    // 31-5Hz
+//      outarray[2] = (uint8_t)freqs[3];    // 63 Hz
+//      outarray[3] = (uint8_t)freqs[5];    // 125 Hz
+//      outarray[4] = (uint8_t)freqs[11];   // 250 Hz
+//      outarray[5] = (uint8_t)freqs[22];   // 500 Hz
+//      outarray[6] = (uint8_t)freqs[44];   // 1 kHz
+//      outarray[7] = (uint8_t)freqs[96];   // 2.2 kHz
+//      outarray[8] = (uint8_t)freqs[197];  // 4.5 kHz
+//      outarray[9] = (uint8_t)freqs[393];  // 9 kHz
+//      outarray[10] = (uint8_t)freqs[655]; // 15 lHz
+//        HAL_UART_Transmit(&huart2, &outarray[0], 11, 0xFFFF);
+  int target_bins[10];
+  for (int i = 0; i < 10; i++)
+  {
+      target_bins[i] = find_bin(target_frequencies[i]);
+  }
+  for (int i = 0; i < 10; i++)
+  {
+    int bin = find_bin(target_frequencies[i]);
+    if (bin < FFT_SIZE / 2)
+    {
+      float real = fft_out_buf[2 * bin];
+      float imag = fft_out_buf[2 * bin + 1];
+      float magnitude = sqrtf(real * real + imag * imag) / FFT_SIZE;
+      vrms_buffer[i] = magnitude / sqrtf(2.0f);
+      int start_bin = bin - 1 >= 0 ? bin - 1 : 0;
+      int end_bin = bin + 1 < FFT_SIZE / 2 ? bin + 1 : FFT_SIZE / 2 - 1;
+      float dB = calculate_db_range(fft_out_buf, start_bin, end_bin);
+      printf("Frequency: %.1f Hz, VRMS: %.3f V, Magnitude: %.3f dB\r\n", target_frequencies[i], vrms_buffer[i],dB);
+    }
+  }
+}
+
 /* USER CODE END 0 */
 
 /**
- * @brief  The application entry point.
- * @retval int
- */
+  * @brief  The application entry point.
+  * @retval int
+  */
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-  uint8_t uart_counter;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -142,7 +222,7 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 
-  /* Configure the peripherals common clocks */
+/* Configure the peripherals common clocks */
   PeriphCommonClock_Config();
 
   /* USER CODE BEGIN SysInit */
@@ -181,12 +261,6 @@ int main(void)
   readid = cs43l22_drv.ReadID(AUDIO_I2C_ADDRESS); // & CS43L22_ID_MASK) == CS43L22_ID)
   initret = cs43l22_Init(AUDIO_I2C_ADDRESS, OUTPUT_DEVICE_BOTH, 80, AUDIO_FREQUENCY_48K);
   arm_rfft_fast_init_f32(&fft_instance, WAV_WRITE_SAMPLE_COUNT / 4);
-  /*for (int i = 0; i < 128; i=i+2)
-  {
-    txBuf[i] = 32767 * sin(2 * 3.14159265 * (float)i / 128.0);
-    txBuf[i+1] = txBuf[i];
-  }*/
-
   HAL_I2S_Transmit_DMA(&hi2s3, (uint16_t *)&txBuf[0], 128);
   HAL_I2S_Receive_DMA(&hi2s2, &pdmRxBuf[0], 128);
   printf("uart start\n");
@@ -197,104 +271,68 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-	  if (button_flag)
-	  {
-	      if (start_stop_recording)
-	      {
-	          start_stop_recording = 0;
-	          printf("stop recording \n");
-	      }
-	      else
-	      {
-	          start_stop_recording = 1;
-	          printf("start recording \n");
-	      }
 
-	      button_flag = 0; // Xóa cờ sau khi xử lý
-	  }
-    if (rxstate == 1 &&start_stop_recording==1)
-    {
-      PDM_Filter(&pdmRxBuf[0], &MidBuffer[0], &PDM1_filter_handler);
-      for (int i = 0; i < 64; i++) // Cập nhật từ 32 thành 64
-      {
-        FifoWrite(MidBuffer[i]);
-        mic1_data1[i] = (float32_t)MidBuffer[i];
-      }
-      arm_rfft_fast_f32(&fft_instance, mic1_data1, output_buffer, 0);
-
-      // Tính biên độ từ FFT
-      for (int i = 0; i < 32; i++)
-      {
-    	float  magnitude = sqrtf(output_buffer[2 * i] * output_buffer[2 * i] +
-                                    output_buffer[2 * i + 1] * output_buffer[2 * i + 1]);
-        float frequency = i * (48000.0f / 64.0f); // f[i] = i * (fs / N)
-
-        printf("%.2f Hz: %.2f\r\n", frequency, magnitude);
-      }
-
-      // Xuất kết quả ra UART
-//      printf("FFT Magnitude1: \r\n");
-//      for (int i = 0; i < (WAV_WRITE_SAMPLE_COUNT / 4); i++)
-//      {
-//        printf("%.2f \r\n", magnitude_buffer[i]);
-//      }
-//      printf("\n");
-      if (fifo_w_ptr - fifo_r_ptr > 128)
-        fifo_read_enabled = 1;
-      rxstate = 0;
-    }
-
-    if (rxstate == 2&&start_stop_recording==1)
-    {
-      PDM_Filter(&pdmRxBuf[64], &MidBuffer[0], &PDM1_filter_handler);
-      for (int i = 0; i < 64; i++) // Cập nhật từ 32 thành 64
-      {
-        FifoWrite(MidBuffer[i]);
-        mic1_data1[i] = (float32_t)MidBuffer[i];
-      }
-      arm_rfft_fast_f32(&fft_instance, mic1_data1, output_buffer, 0);
-
-      // Tính biên độ từ FFT
-      for (int i = 0; i < 32; i++)
-      {
-    	float  magnitude = sqrtf(output_buffer[2 * i] * output_buffer[2 * i] +
-                                    output_buffer[2 * i + 1] * output_buffer[2 * i + 1]);
-        float frequency = i * (48000.0f / 64.0f); // f[i] = i * (fs / N)
-
-        printf("%.2f Hz: %.2f\r\n", frequency, magnitude); // Xuất tần số và biên độ
-      }
-
-      // Xuất kết quả ra UART
-//      printf("FFT Magnitude2: ");
-//      for (int i = 0; i < (WAV_WRITE_SAMPLE_COUNT / 4); i++)
-//      {
-//        printf("%.2f \r\n", magnitude_buffer[i]);
-//      }
-//      printf("\n");
-      rxstate = 0;
-    }
     /* USER CODE BEGIN 3 */
+	  if (button_flag)
+	  	  {
+	  	      if (start_stop_recording)
+	  	      {
+	  	          start_stop_recording = 0;
+	  	          printf("stop recording \n");
+	  	      }
+	  	      else
+	  	      {
+	  	          start_stop_recording = 1;
+	  	          printf("start recording \n");
+	  	      }
+
+	  	      button_flag = 0; // Xóa c�? sau khi xử lý
+	  	  }
+	  if (rxstate == 1 &&start_stop_recording==1)
+	     {
+	       PDM_Filter(&pdmRxBuf[0], &MidBuffer[0], &PDM1_filter_handler);
+	       for (int i = 0; i < 64; i++) // Cập nhật từ 32 thành 64
+	       {
+	         FifoWrite(MidBuffer[i]);
+	         mic1_data1[i] = (float32_t)MidBuffer[i];
+	       }
+	       process_fft_target_vrms(mic1_data1);
+	       if (fifo_w_ptr - fifo_r_ptr > 128)
+	               fifo_read_enabled = 1;
+	             rxstate = 0;
+	     }
+	  if (rxstate == 2&&start_stop_recording==1)
+	     {
+	       PDM_Filter(&pdmRxBuf[64], &MidBuffer[0], &PDM1_filter_handler);
+	       for (int i = 0; i < 64; i++) // Cập nhật từ 32 thành 64
+	       {
+	         FifoWrite(MidBuffer[i]);
+	         mic1_data1[i] = (float32_t)MidBuffer[i];
+	       }
+	       process_fft_target_vrms(mic1_data1);
+	       rxstate = 0;
+	     }
   }
   /* USER CODE END 3 */
 }
 
 /**
- * @brief System Clock Configuration
- * @retval None
- */
+  * @brief System Clock Configuration
+  * @retval None
+  */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
   /** Configure the main internal regulator output voltage
-   */
+  */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
   /** Initializes the RCC Oscillators according to the specified parameters
-   * in the RCC_OscInitTypeDef structure.
-   */
+  * in the RCC_OscInitTypeDef structure.
+  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -309,8 +347,9 @@ void SystemClock_Config(void)
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
-   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
@@ -323,15 +362,15 @@ void SystemClock_Config(void)
 }
 
 /**
- * @brief Peripherals Common Clock Configuration
- * @retval None
- */
+  * @brief Peripherals Common Clock Configuration
+  * @retval None
+  */
 void PeriphCommonClock_Config(void)
 {
   RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
 
   /** Initializes the peripherals clock
-   */
+  */
   PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_I2S;
   PeriphClkInitStruct.PLLI2S.PLLI2SN = 192;
   PeriphClkInitStruct.PLLI2S.PLLI2SR = 2;
@@ -342,10 +381,10 @@ void PeriphCommonClock_Config(void)
 }
 
 /**
- * @brief CRC Initialization Function
- * @param None
- * @retval None
- */
+  * @brief CRC Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_CRC_Init(void)
 {
 
@@ -365,13 +404,14 @@ static void MX_CRC_Init(void)
   /* USER CODE BEGIN CRC_Init 2 */
 
   /* USER CODE END CRC_Init 2 */
+
 }
 
 /**
- * @brief I2C1 Initialization Function
- * @param None
- * @retval None
- */
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_I2C1_Init(void)
 {
 
@@ -398,13 +438,14 @@ static void MX_I2C1_Init(void)
   /* USER CODE BEGIN I2C1_Init 2 */
 
   /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
- * @brief I2S2 Initialization Function
- * @param None
- * @retval None
- */
+  * @brief I2S2 Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_I2S2_Init(void)
 {
 
@@ -431,13 +472,14 @@ static void MX_I2S2_Init(void)
   /* USER CODE BEGIN I2S2_Init 2 */
 
   /* USER CODE END I2S2_Init 2 */
+
 }
 
 /**
- * @brief I2S3 Initialization Function
- * @param None
- * @retval None
- */
+  * @brief I2S3 Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_I2S3_Init(void)
 {
 
@@ -464,13 +506,14 @@ static void MX_I2S3_Init(void)
   /* USER CODE BEGIN I2S3_Init 2 */
 
   /* USER CODE END I2S3_Init 2 */
+
 }
 
 /**
- * @brief SPI1 Initialization Function
- * @param None
- * @retval None
- */
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_SPI1_Init(void)
 {
 
@@ -501,13 +544,14 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
+
 }
 
 /**
- * @brief USART2 Initialization Function
- * @param None
- * @retval None
- */
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_USART2_UART_Init(void)
 {
 
@@ -533,11 +577,12 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
+
 }
 
 /**
- * Enable DMA controller clock
- */
+  * Enable DMA controller clock
+  */
 static void MX_DMA_Init(void)
 {
 
@@ -551,18 +596,19 @@ static void MX_DMA_Init(void)
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+
 }
 
 /**
- * @brief GPIO Initialization Function
- * @param None
- * @retval None
- */
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
-  /* USER CODE END MX_GPIO_Init_1 */
+/* USER CODE BEGIN MX_GPIO_Init_1 */
+/* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
@@ -579,7 +625,8 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(OTG_FS_PowerSwitchOn_GPIO_Port, OTG_FS_PowerSwitchOn_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin | Audio_RST_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD, LD4_Pin|LD3_Pin|LD5_Pin|LD6_Pin
+                          |Audio_RST_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : CS_I2C_SPI_Pin */
   GPIO_InitStruct.Pin = CS_I2C_SPI_Pin;
@@ -609,7 +656,8 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pins : LD4_Pin LD3_Pin LD5_Pin LD6_Pin
                            Audio_RST_Pin */
-  GPIO_InitStruct.Pin = LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin | Audio_RST_Pin;
+  GPIO_InitStruct.Pin = LD4_Pin|LD3_Pin|LD5_Pin|LD6_Pin
+                          |Audio_RST_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -622,7 +670,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(VBUS_FS_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : OTG_FS_ID_Pin OTG_FS_DM_Pin OTG_FS_DP_Pin */
-  GPIO_InitStruct.Pin = OTG_FS_ID_Pin | OTG_FS_DM_Pin | OTG_FS_DP_Pin;
+  GPIO_InitStruct.Pin = OTG_FS_ID_Pin|OTG_FS_DM_Pin|OTG_FS_DP_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -640,10 +688,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(MEMS_INT2_GPIO_Port, &GPIO_InitStruct);
+
+/* USER CODE BEGIN MX_GPIO_Init_2 */
   HAL_NVIC_SetPriority(EXTI0_IRQn, 2, 0); // Đặt mức ưu tiên cho ngắt
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);         // Bật ngắt EXTI0
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-  /* USER CODE END MX_GPIO_Init_2 */
+/* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
@@ -682,15 +731,15 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   if (GPIO_Pin == GPIO_PIN_0) // Kiểm tra ngắt từ PA0
   {
-    button_flag = 1; // Đặt cờ khi nút được nhấn
+    button_flag = 1; // �?ặt c�? khi nút được nhấn
   }
 }
 /* USER CODE END 4 */
 
 /**
- * @brief  This function is executed in case of error occurrence.
- * @retval None
- */
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
@@ -702,14 +751,14 @@ void Error_Handler(void)
   /* USER CODE END Error_Handler_Debug */
 }
 
-#ifdef USE_FULL_ASSERT
+#ifdef  USE_FULL_ASSERT
 /**
- * @brief  Reports the name of the source file and the source line number
- *         where the assert_param error has occurred.
- * @param  file: pointer to the source file name
- * @param  line: assert_param error line source number
- * @retval None
- */
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
