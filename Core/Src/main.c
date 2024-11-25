@@ -62,6 +62,7 @@ float magnitude_buffer[WAV_WRITE_SAMPLE_COUNT / 4];
 const float target_frequencies[] = {31.5f, 63.0f, 125.0f, 250.0f, 500.0f, 1000.0f, 2200.0f, 4500.0f, 9000.0f, 15000.0f};
 float fft_out_buf[FFT_SIZE];
 float vrms_buffer[10];
+float db[10];
 uint8_t uartfree = 1;
 uint8_t outarray[14];
 arm_rfft_fast_instance_f32 fft_instance;
@@ -129,25 +130,12 @@ int find_bin(float frequency)
 {
   return (int)((frequency * FFT_SIZE) / SAMPLE_RATE);
 }
-float calculate_db_range(const float *fft_output, int start_bin, int end_bin)
+float calculate_db_range(const float *fft_output,int bin)
 {
-    float magnitude_sum = 0.0f;
-
-    // Tính tổng năng lượng trong dải bin
-    for (int i = start_bin; i <= end_bin; i++)
-    {
-        float real = fft_output[2 * i];     // Phần thực
-        float imag = fft_output[2 * i + 1]; // Phần ảo
-        magnitude_sum += sqrtf(real * real + imag * imag);
-    }
-
-    // Trung bình magnitude và chuyển đổi sang dB
-    float average_magnitude = magnitude_sum / (end_bin - start_bin + 1);
-    return 20.0f * log10f(average_magnitude);
-}
-float complexABS(float real, float compl )
-{
-  return sqrtf(real * real + compl *compl );
+        float real = fft_output[2 * bin];     // Phần thực
+        float imag = fft_output[2 * bin + 1]; // Phần ảo
+        float magnitude = sqrtf(real * real + imag * imag);
+        return 20.0f * log10f(magnitude);
 }
 void process_fft_target_vrms(float32_t *fft_in_buf)
 {
@@ -177,11 +165,6 @@ void process_fft_target_vrms(float32_t *fft_in_buf)
 //      outarray[9] = (uint8_t)freqs[393];  // 9 kHz
 //      outarray[10] = (uint8_t)freqs[655]; // 15 lHz
 //        HAL_UART_Transmit(&huart2, &outarray[0], 11, 0xFFFF);
-  int target_bins[10];
-  for (int i = 0; i < 10; i++)
-  {
-      target_bins[i] = find_bin(target_frequencies[i]);
-  }
   for (int i = 0; i < 10; i++)
   {
     int bin = find_bin(target_frequencies[i]);
@@ -189,12 +172,9 @@ void process_fft_target_vrms(float32_t *fft_in_buf)
     {
       float real = fft_out_buf[2 * bin];
       float imag = fft_out_buf[2 * bin + 1];
-      float magnitude = sqrtf(real * real + imag * imag) / FFT_SIZE;
-      vrms_buffer[i] = magnitude / sqrtf(2.0f);
-      int start_bin = bin - 1 >= 0 ? bin - 1 : 0;
-      int end_bin = bin + 1 < FFT_SIZE / 2 ? bin + 1 : FFT_SIZE / 2 - 1;
-      float dB = calculate_db_range(fft_out_buf, start_bin, end_bin);
-      printf("Frequency: %.1f Hz, VRMS: %.3f V, Magnitude: %.3f dB\r\n", target_frequencies[i], vrms_buffer[i],dB);
+      db[i] = sqrtf(real * real + imag * imag) / FFT_SIZE;
+      vrms_buffer[i] = db[i] / sqrtf(2.0f);
+      printf("Frequency: %.1f Hz, VRMS: %.3f V, Magnitude: %.3f dB\r\n", target_frequencies[i], vrms_buffer[i],db[i]);
     }
   }
 }
@@ -690,7 +670,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(MEMS_INT2_GPIO_Port, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
-  HAL_NVIC_SetPriority(EXTI0_IRQn, 2, 0); // Đặt mức ưu tiên cho ngắt
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 2, 0); // �?ặt mức ưu tiên cho ngắt
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);         // Bật ngắt EXTI0
 /* USER CODE END MX_GPIO_Init_2 */
 }
