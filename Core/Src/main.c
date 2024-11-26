@@ -221,7 +221,7 @@ int main(void)
   /* Retieve audio codec identifier */
   readid = cs43l22_drv.ReadID(AUDIO_I2C_ADDRESS); // & CS43L22_ID_MASK) == CS43L22_ID)
   initret = cs43l22_Init(AUDIO_I2C_ADDRESS, OUTPUT_DEVICE_BOTH, 80, AUDIO_FREQUENCY_48K);
-  arm_rfft_fast_init_f32(&fft_instance, WAV_WRITE_SAMPLE_COUNT / 4);
+  arm_rfft_fast_init_f32(&fft_instance, FFT_SIZE);
   HAL_I2S_Transmit_DMA(&hi2s3, (uint16_t *)&txBuf[0], 128);
   HAL_I2S_Receive_DMA(&hi2s2, &pdmRxBuf[0], 128);
   printf("uart start\n");
