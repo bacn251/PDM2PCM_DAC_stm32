@@ -85,6 +85,7 @@ DMA_HandleTypeDef hdma_spi3_tx;
 SPI_HandleTypeDef hspi1;
 
 UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
 
@@ -141,23 +142,43 @@ float calculate_db_range(const float *fft_output, int bin)
   float magnitude = sqrtf(real * real + imag * imag);
   return 20.0f * log10f(magnitude);
 }
+float complexABS(float real, float compl )
+{
+  return 2 * sqrtf(real * real + compl *compl );
+}
 void process_fft_target_vrms(float32_t *fft_in_buf)
 {
   arm_rfft_fast_f32(&fft_instance, fft_in_buf, fft_out_buf, 0);
-//  arm_cmplx_mag_f32(fft_out_buf, output_fft_mag, HALF_FFT_SIZE);
-  for (int i = 0; i < 10; i++)
+  //  arm_cmplx_mag_f32(fft_out_buf, output_fft_mag, HALF_FFT_SIZE);
+  int freqs[1024];
+  int freqpoint = 0;
+  int offset = 150; // variable noisefloor offset
+
+  // calculate abs values and linear-to-dB
+  for (int i = 0; i < 1024; i = i + 2)
   {
-    int bin = find_bin(target_frequencies[i]);
-    if (bin < FFT_SIZE / 2)
-    {
-      float real = fft_out_buf[2 * bin];
-      float imag = fft_out_buf[2 * bin + 1];
-      float magnitude = sqrtf(real * real + imag * imag);
-      db[i] = 20.0f * log10f(magnitude);
-      vrms_buffer[i] =  magnitude/ sqrtf(2.0f);
-      printf("Frequency: %.1f Hz, VRMS: %.3f V, Magnitude: %.3f dB\r\n", target_frequencies[i], vrms_buffer[i], db[i]);
-    }
+    freqs[freqpoint] = (int)(20 * log10f(complexABS(fft_out_buf[i], fft_out_buf[i + 1]))) - offset;
+    if (freqs[freqpoint] < 0)
+      freqs[freqpoint] = 0;
+    freqpoint++;
   }
+
+  // push out data to Uart
+  outarray[0] = 0xff;                 // frame start
+  outarray[1] = (uint8_t)freqs[1];    // 31-5Hz
+  outarray[2] = (uint8_t)freqs[2];    // 63 Hz
+  outarray[3] = (uint8_t)freqs[3];    // 125 Hz
+  outarray[4] = (uint8_t)freqs[5];    // 250 Hz
+  outarray[5] = (uint8_t)freqs[11];   // 500 Hz
+  outarray[6] = (uint8_t)freqs[22];   // 1 kHz
+  outarray[7] = (uint8_t)freqs[47];   // 2.2 kHz
+  outarray[8] = (uint8_t)freqs[96];   // 4.5 kHz
+  outarray[9] = (uint8_t)freqs[192];  // 9 kHz
+  outarray[10] = (uint8_t)freqs[320]; // 15 lHz
+
+  if (uartfree == 1)
+    HAL_UART_Transmit_DMA(&huart2, &outarray[0], 11);
+  uartfree = 0;
 }
 
 /* USER CODE END 0 */
@@ -224,7 +245,7 @@ int main(void)
   arm_rfft_fast_init_f32(&fft_instance, FFT_SIZE);
   HAL_I2S_Transmit_DMA(&hi2s3, (uint16_t *)&txBuf[0], 128);
   HAL_I2S_Receive_DMA(&hi2s2, &pdmRxBuf[0], 128);
-  printf("uart start\n");
+  // printf("uart start\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -239,12 +260,12 @@ int main(void)
       if (start_stop_recording)
       {
         start_stop_recording = 0;
-        printf("stop recording \n");
+        //  printf("stop recording \n");
       }
       else
       {
         start_stop_recording = 1;
-        printf("start recording \n");
+        // printf("start recording \n");
       }
 
       button_flag = 0;
@@ -255,7 +276,8 @@ int main(void)
       for (int i = 0; i < 32; i++)
       {
         FifoWrite(MidBuffer[i]);
-        fft_input_buffer[fft_input_index++] = (float32_t)MidBuffer[i];
+        fft_input_buffer[fft_input_index++] = (float32_t)((int)(MidBuffer[i] << 16) | MidBuffer[i + 1]);
+        fft_input_buffer[fft_input_index++] = (float32_t)((int)(MidBuffer[i + 2] << 16) | MidBuffer[i + 3]);
       }
 
       if (fft_input_index >= FFT_SIZE)
@@ -271,7 +293,8 @@ int main(void)
       for (int i = 0; i < 32; i++)
       {
         FifoWrite(MidBuffer[i]);
-        fft_input_buffer[fft_input_index++] = (float32_t)MidBuffer[i];
+        fft_input_buffer[fft_input_index++] = (float32_t)((int)(MidBuffer[i] << 16) | MidBuffer[i + 1]);
+        fft_input_buffer[fft_input_index++] = (float32_t)((int)(MidBuffer[i + 2] << 16) | MidBuffer[i + 3]);
       }
       if (fft_input_index >= FFT_SIZE)
       {
@@ -557,6 +580,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+  /* DMA1_Stream6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
 }
 
 /**
@@ -660,6 +686,11 @@ PUTCHAR_PROTOTYPE
   /* e.g. write a character to the EVAL_COM1 and Loop until the end of transmission */
   HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
   return ch;
+}
+void HAL_UART_TxHalfCpltCallback(UART_HandleTypeDef *huart)
+{
+  uartfree = 1;
+  huart2.gState = HAL_UART_STATE_READY;
 }
 void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
 {
