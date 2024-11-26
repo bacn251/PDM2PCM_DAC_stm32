@@ -149,23 +149,24 @@ float complexABS(float real, float compl )
 void process_fft_target_vrms(float32_t *fft_in_buf)
 {
   arm_rfft_fast_f32(&fft_instance, fft_in_buf, fft_out_buf, 0);
-  //  arm_cmplx_mag_f32(fft_out_buf, output_fft_mag, HALF_FFT_SIZE);
   int freqs[1024];
   int freqpoint = 0;
-  int offset = 150; // variable noisefloor offset
-
-  // calculate abs values and linear-to-dB
+  int offset = 65;
   for (int i = 0; i < 1024; i = i + 2)
   {
-    freqs[freqpoint] = (int)(20 * log10f(complexABS(fft_out_buf[i], fft_out_buf[i + 1]))) - offset;
-    if (freqs[freqpoint] < 0)
-      freqs[freqpoint] = 0;
-    freqpoint++;
+    float real = fft_out_buf[i];
+    float imag = fft_out_buf[i + 1];
+    float magnitude = 2 * sqrtf(real * real + imag * imag);
+    int db_value = (int)(20 * log10f(magnitude)) - offset;
+    if (db_value < 0)
+      db_value = 0;
+    if (db_value > 255)
+      db_value = 255;
+    freqs[freqpoint++] = db_value;
   }
 
-  // push out data to Uart
-  outarray[0] = 0xff;                 // frame start
-  outarray[1] = (uint8_t)freqs[1];    // 31-5Hz
+  outarray[0] = 0xFF;                 // Start byte
+  outarray[1] = (uint8_t)freqs[1];    // 31-5 Hz
   outarray[2] = (uint8_t)freqs[2];    // 63 Hz
   outarray[3] = (uint8_t)freqs[3];    // 125 Hz
   outarray[4] = (uint8_t)freqs[5];    // 250 Hz
@@ -174,11 +175,13 @@ void process_fft_target_vrms(float32_t *fft_in_buf)
   outarray[7] = (uint8_t)freqs[47];   // 2.2 kHz
   outarray[8] = (uint8_t)freqs[96];   // 4.5 kHz
   outarray[9] = (uint8_t)freqs[192];  // 9 kHz
-  outarray[10] = (uint8_t)freqs[320]; // 15 lHz
+  outarray[10] = (uint8_t)freqs[320]; // 15 kHz
 
   if (uartfree == 1)
-    HAL_UART_Transmit_DMA(&huart2, &outarray[0], 11);
-  uartfree = 0;
+  {
+    HAL_UART_Transmit_DMA(&huart2, outarray, 11);
+    uartfree = 0; //
+  }
 }
 
 /* USER CODE END 0 */
@@ -242,7 +245,7 @@ int main(void)
   /* Retieve audio codec identifier */
   readid = cs43l22_drv.ReadID(AUDIO_I2C_ADDRESS); // & CS43L22_ID_MASK) == CS43L22_ID)
   initret = cs43l22_Init(AUDIO_I2C_ADDRESS, OUTPUT_DEVICE_BOTH, 80, AUDIO_FREQUENCY_48K);
-  arm_rfft_fast_init_f32(&fft_instance, FFT_SIZE);
+  arm_rfft_fast_init_f32(&fft_instance, 1024);
   HAL_I2S_Transmit_DMA(&hi2s3, (uint16_t *)&txBuf[0], 128);
   HAL_I2S_Receive_DMA(&hi2s2, &pdmRxBuf[0], 128);
   // printf("uart start\n");
@@ -276,11 +279,10 @@ int main(void)
       for (int i = 0; i < 32; i++)
       {
         FifoWrite(MidBuffer[i]);
-        fft_input_buffer[fft_input_index++] = (float32_t)((int)(MidBuffer[i] << 16) | MidBuffer[i + 1]);
-        fft_input_buffer[fft_input_index++] = (float32_t)((int)(MidBuffer[i + 2] << 16) | MidBuffer[i + 3]);
+        fft_input_buffer[fft_input_index++] = (float32_t)MidBuffer[i];
       }
 
-      if (fft_input_index >= FFT_SIZE)
+      if (fft_input_index >= 1024)
       {
         process_fft_target_vrms(fft_input_buffer);
         fft_input_index = 0;
@@ -293,10 +295,9 @@ int main(void)
       for (int i = 0; i < 32; i++)
       {
         FifoWrite(MidBuffer[i]);
-        fft_input_buffer[fft_input_index++] = (float32_t)((int)(MidBuffer[i] << 16) | MidBuffer[i + 1]);
-        fft_input_buffer[fft_input_index++] = (float32_t)((int)(MidBuffer[i + 2] << 16) | MidBuffer[i + 3]);
+        fft_input_buffer[fft_input_index++] = (float32_t)MidBuffer[i];
       }
-      if (fft_input_index >= FFT_SIZE)
+      if (fft_input_index >= 1024)
       {
         process_fft_target_vrms(fft_input_buffer);
         fft_input_index = 0;
