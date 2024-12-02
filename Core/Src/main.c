@@ -118,7 +118,6 @@ int16_t fifobuf[256];
 uint8_t fifo_w_ptr = 0;
 uint8_t fifo_r_ptr = 0;
 uint8_t fifo_read_enabled = 0;
-
 void FifoWrite(int16_t data)
 {
   fifobuf[fifo_w_ptr] = data;
@@ -130,58 +129,6 @@ int16_t FifoRead()
   int16_t val = fifobuf[fifo_r_ptr];
   fifo_r_ptr++;
   return val;
-}
-int find_bin(float frequency)
-{
-  return (int)((frequency * FFT_SIZE) / SAMPLE_RATE);
-}
-float calculate_db_range(const float *fft_output, int bin)
-{
-  float real = fft_output[2 * bin];     // Phần thực
-  float imag = fft_output[2 * bin + 1]; // Phần ảo
-  float magnitude = sqrtf(real * real + imag * imag);
-  return 20.0f * log10f(magnitude);
-}
-float complexABS(float real, float compl )
-{
-  return 2 * sqrtf(real * real + compl *compl );
-}
-void process_fft_target_vrms(float32_t *fft_in_buf)
-{
-  arm_rfft_fast_f32(&fft_instance, fft_in_buf, fft_out_buf, 0);
-  int freqs[1024];
-  int freqpoint = 0;
-  int offset = 40;
-  for (int i = 0; i < 1024; i = i + 2)
-  {
-    float real = fft_out_buf[i];
-    float imag = fft_out_buf[i + 1];
-    float magnitude = 2 * sqrtf(real * real + imag * imag);
-    int db_value = (int)(20 * log10f(magnitude)) - offset;
-    if (db_value < 0)
-      db_value = 0;
-    if (db_value > 255)
-      db_value = 255;
-    freqs[freqpoint++] = db_value;
-  }
-
-  outarray[0] = 0xFF;                 // Start byte
-  outarray[1] = (uint8_t)freqs[1];    // 31-5 Hz
-  outarray[2] = (uint8_t)freqs[2];    // 63 Hz
-  outarray[3] = (uint8_t)freqs[3];    // 125 Hz
-  outarray[4] = (uint8_t)freqs[5];    // 250 Hz
-  outarray[5] = (uint8_t)freqs[11];   // 500 Hz
-  outarray[6] = (uint8_t)freqs[22];   // 1 kHz
-  outarray[7] = (uint8_t)freqs[47];   // 2.2 kHz
-  outarray[8] = (uint8_t)freqs[96];   // 4.5 kHz
-  outarray[9] = (uint8_t)freqs[192];  // 9 kHz
-  outarray[10] = (uint8_t)freqs[320]; // 15 kHz
-
-  if (uartfree == 1)
-  {
-    HAL_UART_Transmit_DMA(&huart2, outarray, 11);
-    uartfree = 0; //
-  }
 }
 
 /* USER CODE END 0 */
@@ -226,29 +173,34 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
-//  PDM_Filter_Handler_t PDM1_filter_handler;
-//  PDM_Filter_Config_t PDM1_filter_config;
-//  /* Initialize PDM Filter structure */
-//  PDM1_filter_handler.bit_order = PDM_FILTER_BIT_ORDER_LSB;
-//  PDM1_filter_handler.endianness = PDM_FILTER_ENDIANNESS_BE;
-//  PDM1_filter_handler.high_pass_tap = 2136746228; // 2104533974; //2136746228; //0.9xx*(2^31-1)
-//  PDM1_filter_handler.out_ptr_channels = 1;
-//  PDM1_filter_handler.in_ptr_channels = 1;
-//  PDM_Filter_Init((PDM_Filter_Handler_t *)(&PDM1_filter_handler));
-//
-//  PDM1_filter_config.output_samples_number = 32;
-//  PDM1_filter_config.mic_gain = 25;
-//  PDM1_filter_config.decimation_factor = PDM_FILTER_DEC_FACTOR_32; // DAC CLK: 46875 kS/s * 32 bit = 1500000 MHz, PDM2PCM: 1500000 / 32 = 46875 kS/s
-//  PDM_Filter_setConfig((PDM_Filter_Handler_t *)&PDM1_filter_handler, &PDM1_filter_config);
+  PDM_Filter_Handler_t PDM1_filter_handler;
+   PDM_Filter_Config_t PDM1_filter_config;
+   /* Initialize PDM Filter structure */
+   PDM1_filter_handler.bit_order = PDM_FILTER_BIT_ORDER_LSB;
+   PDM1_filter_handler.endianness = PDM_FILTER_ENDIANNESS_BE;
+   PDM1_filter_handler.high_pass_tap = 2136746228; //2104533974; //2136746228; //0.9xx*(2^31-1)
+   PDM1_filter_handler.out_ptr_channels = 1;
+   PDM1_filter_handler.in_ptr_channels = 1;
+   PDM_Filter_Init ((PDM_Filter_Handler_t*) (&PDM1_filter_handler));
 
-  uint16_t readid = 0, initret = 0;
-  /* Retieve audio codec identifier */
-  readid = cs43l22_drv.ReadID(AUDIO_I2C_ADDRESS); // & CS43L22_ID_MASK) == CS43L22_ID)
-  initret = cs43l22_Init(AUDIO_I2C_ADDRESS, OUTPUT_DEVICE_BOTH, 80, AUDIO_FREQUENCY_48K);
-  arm_rfft_fast_init_f32(&fft_instance, 1024);
-  HAL_I2S_Transmit_DMA(&hi2s3, (uint16_t *)&txBuf[0], 64);
-  HAL_I2S_Receive_DMA(&hi2s2, &pdmRxBuf[0], 64);
-  // printf("uart start\n");
+   PDM1_filter_config.output_samples_number = 32;
+   PDM1_filter_config.mic_gain = 25;
+   PDM1_filter_config.decimation_factor = PDM_FILTER_DEC_FACTOR_32; //DAC CLK: 46875 kS/s * 32 bit = 1500000 MHz, PDM2PCM: 1500000 / 32 = 46875 kS/s
+   PDM_Filter_setConfig ((PDM_Filter_Handler_t*) &PDM1_filter_handler, &PDM1_filter_config);
+
+   uint16_t readid = 0, initret = 0;
+   /* Retieve audio codec identifier */
+   readid = cs43l22_drv.ReadID(AUDIO_I2C_ADDRESS); // & CS43L22_ID_MASK) == CS43L22_ID)
+   initret = cs43l22_Init(AUDIO_I2C_ADDRESS, OUTPUT_DEVICE_BOTH, 80, AUDIO_FREQUENCY_48K);
+
+   /*for (int i = 0; i < 128; i=i+2)
+   {
+     txBuf[i] = 32767 * sin(2 * 3.14159265 * (float)i / 128.0);
+     txBuf[i+1] = txBuf[i];
+   }*/
+
+   HAL_I2S_Transmit_DMA(&hi2s3, (uint16_t *)&txBuf[0], 128);
+   HAL_I2S_Receive_DMA(&hi2s2, &pdmRxBuf[0], 128);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -263,47 +215,51 @@ int main(void)
       if (start_stop_recording)
       {
         start_stop_recording = 0;
-        //  printf("stop recording \n");
       }
       else
       {
         start_stop_recording = 1;
-        // printf("start recording \n");
       }
 
       button_flag = 0;
     }
-    if (rxstate == 1 && start_stop_recording == 1)
+    if (rxstate == 1)
     {
       PDM_Filter(&pdmRxBuf[0], &MidBuffer[0], &PDM1_filter_handler);
-      for (int i = 0; i < 16; i++)
+      for (int i = 0; i < 32; i++)
       {
+    	 printf("stay 1");
         FifoWrite(MidBuffer[i]);
-        fft_input_buffer[fft_input_index++] = (float32_t)MidBuffer[i];
       }
 
-      if (fft_input_index >= 1024)
+      if (fifo_w_ptr - fifo_r_ptr > 128)
       {
-        process_fft_target_vrms(fft_input_buffer);
-        fft_input_index = 0;
+             fifo_read_enabled = 1;
       }
-      rxstate = 0;
+             rxstate = 0;
     }
-    if (rxstate == 2 && start_stop_recording == 1)
+    if (rxstate == 2)
     {
       PDM_Filter(&pdmRxBuf[64], &MidBuffer[0], &PDM1_filter_handler);
-      for (int i = 0; i < 16; i++)
+      for (int i = 0; i < 32; i++)
       {
+    	  printf("stay 2");
         FifoWrite(MidBuffer[i]);
-        fft_input_buffer[fft_input_index++] = (float32_t)MidBuffer[i];
-      }
-      if (fft_input_index >= 1024)
-      {
-        process_fft_target_vrms(fft_input_buffer);
-        fft_input_index = 0;
       }
       rxstate = 0;
     }
+    if (fifo_read_enabled)
+       {
+         uint8_t uartTxBuf[256];
+         for (int i = 0; i < 128; i++)
+         {
+           int16_t data = FifoRead();
+           uartTxBuf[2*i] = (uint8_t)(data & 0xFF);
+           uartTxBuf[2*i + 1] = (uint8_t)((data >> 8) & 0xFF);
+         }
+         HAL_UART_Transmit_DMA(&huart2, uartTxBuf, 256);
+         fifo_read_enabled = 0;
+       }
   }
   /* USER CODE END 3 */
 }
