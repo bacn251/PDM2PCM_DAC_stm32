@@ -46,30 +46,12 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define WAV_WRITE_SAMPLE_COUNT 256
-int16_t data_i2s[WAV_WRITE_SAMPLE_COUNT];
-float32_t mic1_data1[WAV_WRITE_SAMPLE_COUNT / 4],
-    mic1_data2[WAV_WRITE_SAMPLE_COUNT / 4];
-float32_t data_out_fft1[WAV_WRITE_SAMPLE_COUNT / 4],
-    data_out_fft2[WAV_WRITE_SAMPLE_COUNT / 4];
-volatile int16_t sample_i2s;
-volatile uint8_t button_flag, start_stop_recording;
-volatile uint8_t half_i2s, full_i2s;
-float output_buffer[WAV_WRITE_SAMPLE_COUNT / 4];
-float magnitude_buffer[WAV_WRITE_SAMPLE_COUNT / 4];
-#define FFT_SIZE 1024
-#define SAMPLE_RATE 48000.0f
-#define HALF_FFT_SIZE (FFT_SIZE / 2)
-float32_t output_fft_mag[HALF_FFT_SIZE];
-float32_t fft_input_buffer[FFT_SIZE];
-static int fft_input_index = 0;
-const float target_frequencies[] = {31.5f, 63.0f, 125.0f, 250.0f, 500.0f, 1000.0f, 2200.0f, 4500.0f, 9000.0f, 15000.0f};
-float fft_out_buf[FFT_SIZE];
-float vrms_buffer[10];
-float db[10];
+#define PCM_BUFFER_SIZE 16
+int16_t pcmBuffer[PCM_BUFFER_SIZE];
+uint8_t uart_buffer[PCM_BUFFER_SIZE * 2];
 uint8_t uartfree = 1;
 uint8_t outarray[14];
-arm_rfft_fast_instance_f32 fft_instance;
+int button_flag=0;
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -109,7 +91,7 @@ static void MX_USART2_UART_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 int16_t txBuf[128];
-uint16_t pdmRxBuf[128];
+uint16_t pdmRxBuf[64];
 int16_t MidBuffer[32];
 uint8_t txstate = 0;
 uint8_t rxstate = 0;
@@ -129,6 +111,23 @@ int16_t FifoRead()
   int16_t val = fifobuf[fifo_r_ptr];
   fifo_r_ptr++;
   return val;
+}
+uint8_t x =0x55;
+void Process_Audio_Data()
+{
+    PDM_Filter(pdmRxBuf, pcmBuffer, &PDM1_filter_handler);
+
+    // Chuyển đổi PCM (16-bit) sang UART buffer (8-bit)
+    for (int i = 0; i < 16; i++) {
+    	  uart_buffer[i * 2] = (uint8_t)(pcmBuffer[i] & 0xFF);
+    	  uart_buffer[i * 2 + 1] = (uint8_t)((pcmBuffer[i] >> 8) & 0xFF);
+    }
+
+    // Gửi dữ liệu qua UART nếu UART sẵn sàng
+    if (uartfree==1) {
+        HAL_UART_Transmit_DMA(&huart2, uart_buffer,10);
+        uartfree = 0;
+    }
 }
 
 /* USER CODE END 0 */
@@ -172,22 +171,6 @@ int main(void)
   MX_PDM2PCM_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
-  PDM_Filter_Handler_t PDM1_filter_handler;
-   PDM_Filter_Config_t PDM1_filter_config;
-   /* Initialize PDM Filter structure */
-   PDM1_filter_handler.bit_order = PDM_FILTER_BIT_ORDER_LSB;
-   PDM1_filter_handler.endianness = PDM_FILTER_ENDIANNESS_BE;
-   PDM1_filter_handler.high_pass_tap = 2136746228; //2104533974; //2136746228; //0.9xx*(2^31-1)
-   PDM1_filter_handler.out_ptr_channels = 1;
-   PDM1_filter_handler.in_ptr_channels = 1;
-   PDM_Filter_Init ((PDM_Filter_Handler_t*) (&PDM1_filter_handler));
-
-   PDM1_filter_config.output_samples_number = 32;
-   PDM1_filter_config.mic_gain = 25;
-   PDM1_filter_config.decimation_factor = PDM_FILTER_DEC_FACTOR_32; //DAC CLK: 46875 kS/s * 32 bit = 1500000 MHz, PDM2PCM: 1500000 / 32 = 46875 kS/s
-   PDM_Filter_setConfig ((PDM_Filter_Handler_t*) &PDM1_filter_handler, &PDM1_filter_config);
-
    uint16_t readid = 0, initret = 0;
    /* Retieve audio codec identifier */
    readid = cs43l22_drv.ReadID(AUDIO_I2C_ADDRESS); // & CS43L22_ID_MASK) == CS43L22_ID)
@@ -210,56 +193,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (button_flag)
-    {
-      if (start_stop_recording)
-      {
-        start_stop_recording = 0;
-      }
-      else
-      {
-        start_stop_recording = 1;
-      }
-
-      button_flag = 0;
-    }
-    if (rxstate == 1)
-    {
-      PDM_Filter(&pdmRxBuf[0], &MidBuffer[0], &PDM1_filter_handler);
-      for (int i = 0; i < 32; i++)
-      {
-    	 printf("stay 1");
-        FifoWrite(MidBuffer[i]);
-      }
-
-      if (fifo_w_ptr - fifo_r_ptr > 128)
-      {
-             fifo_read_enabled = 1;
-      }
-             rxstate = 0;
-    }
-    if (rxstate == 2)
-    {
-      PDM_Filter(&pdmRxBuf[64], &MidBuffer[0], &PDM1_filter_handler);
-      for (int i = 0; i < 32; i++)
-      {
-    	  printf("stay 2");
-        FifoWrite(MidBuffer[i]);
-      }
-      rxstate = 0;
-    }
-    if (fifo_read_enabled)
-       {
-         uint8_t uartTxBuf[256];
-         for (int i = 0; i < 128; i++)
-         {
-           int16_t data = FifoRead();
-           uartTxBuf[2*i] = (uint8_t)(data & 0xFF);
-           uartTxBuf[2*i + 1] = (uint8_t)((data >> 8) & 0xFF);
-         }
-         HAL_UART_Transmit_DMA(&huart2, uartTxBuf, 256);
-         fifo_read_enabled = 0;
-       }
   }
   /* USER CODE END 3 */
 }
@@ -661,28 +594,34 @@ void HAL_UART_TxHalfCpltCallback(UART_HandleTypeDef *huart)
 }
 void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
 {
-  txstate = 1;
+  //txstate = 1;
 }
 
 void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s)
 {
-  txstate = 2;
+  //txstate = 2;
 }
 
 void HAL_I2S_RxHalfCpltCallback(I2S_HandleTypeDef *hi2s)
 {
-  rxstate = 1;
+  //rxstate = 1;
 }
 
-void HAL_I2S_RxCpltCallback(I2S_HandleTypeDef *hi2s)
-{
-  rxstate = 2;
+void HAL_I2S_RxCpltCallback(I2S_HandleTypeDef *hi2s) {
+    if (hi2s == &hi2s2) {
+        Process_Audio_Data();
+    }
 }
 void EXTI0_IRQHandler(void)
 {
   HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0); // Xử lý ngắt qua HAL
 }
-
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+    if (huart->ErrorCode & HAL_UART_ERROR_ORE) {
+        printf("UART Overrun Error detected!\n");
+        __HAL_UART_CLEAR_OREFLAG(huart); // Xóa cờ lỗi overrun
+    }
+}
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   if (GPIO_Pin == GPIO_PIN_0) // Kiểm tra ngắt từ PA0
