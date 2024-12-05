@@ -83,7 +83,10 @@ int16_t fifobuf[256];
 uint8_t fifo_w_ptr = 0;
 uint8_t fifo_r_ptr = 0;
 uint8_t fifo_read_enabled = 0;
-
+#define SIN_FREQ       1000
+#define SAMPLING_RATE  48000
+#define BUFFER_LENGTH  SAMPLING_RATE / SIN_FREQ
+uint16_t  buffer_audio[2 * BUFFER_LENGTH];
 void FifoWrite(int16_t data) {
   fifobuf[fifo_w_ptr] = data;
   fifo_w_ptr++;
@@ -136,34 +139,8 @@ int main(void)
   MX_PDM2PCM_Init();
   /* USER CODE BEGIN 2 */
 
-  PDM_Filter_Handler_t PDM1_filter_handler;
-  PDM_Filter_Config_t PDM1_filter_config;
-  /* Initialize PDM Filter structure */
-  PDM1_filter_handler.bit_order = PDM_FILTER_BIT_ORDER_LSB;
-  PDM1_filter_handler.endianness = PDM_FILTER_ENDIANNESS_BE;
-  PDM1_filter_handler.high_pass_tap = 2136746228; //2104533974; //2136746228; //0.9xx*(2^31-1)
-  PDM1_filter_handler.out_ptr_channels = 1;
-  PDM1_filter_handler.in_ptr_channels = 1;
-  PDM_Filter_Init ((PDM_Filter_Handler_t*) (&PDM1_filter_handler));
-
-  PDM1_filter_config.output_samples_number = 32;
-  PDM1_filter_config.mic_gain = 25;
-  PDM1_filter_config.decimation_factor = PDM_FILTER_DEC_FACTOR_32; //DAC CLK: 46875 kS/s * 32 bit = 1500000 MHz, PDM2PCM: 1500000 / 32 = 46875 kS/s
-  PDM_Filter_setConfig ((PDM_Filter_Handler_t*) &PDM1_filter_handler, &PDM1_filter_config);
-
-  uint16_t readid = 0, initret = 0;
-  /* Retieve audio codec identifier */
-  readid = cs43l22_drv.ReadID(AUDIO_I2C_ADDRESS); // & CS43L22_ID_MASK) == CS43L22_ID)
-  initret = cs43l22_Init(AUDIO_I2C_ADDRESS, OUTPUT_DEVICE_BOTH, 80, AUDIO_FREQUENCY_48K);
-
-  /*for (int i = 0; i < 128; i=i+2)
-  {
-    txBuf[i] = 32767 * sin(2 * 3.14159265 * (float)i / 128.0);
-    txBuf[i+1] = txBuf[i];
-  }*/
-
-  HAL_I2S_Transmit_DMA(&hi2s3, (uint16_t *)&txBuf[0], 128);
-  HAL_I2S_Receive_DMA(&hi2s2, &pdmRxBuf[0], 128);
+  cs43l22_init();
+  HAL_I2S_Receive_DMA(&hi2s2, &buffer_audio[0], 2 * BUFFER_LENGTH);
 
   /* USER CODE END 2 */
 
@@ -174,55 +151,55 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (rxstate == 1)
-    {
-      PDM_Filter (&pdmRxBuf[0], &MidBuffer[0], &PDM1_filter_handler);
-      for (int i = 0; i < 32; i++)
-      {
-        FifoWrite (MidBuffer[i]);
-      }
-      if (fifo_w_ptr - fifo_r_ptr > 128)
-        fifo_read_enabled = 1;
-      rxstate = 0;
-    }
+  //   if (rxstate == 1)
+  //   {
+  //     PDM_Filter (&pdmRxBuf[0], &MidBuffer[0], &PDM1_filter_handler);
+  //     for (int i = 0; i < 32; i++)
+  //     {
+  //       FifoWrite (MidBuffer[i]);
+  //     }
+  //     if (fifo_w_ptr - fifo_r_ptr > 128)
+  //       fifo_read_enabled = 1;
+  //     rxstate = 0;
+  //   }
 
-    if (rxstate == 2)
-    {
-      PDM_Filter (&pdmRxBuf[64], &MidBuffer[0], &PDM1_filter_handler);
-      for (int i = 0; i < 32; i++)
-      {
-        FifoWrite (MidBuffer[i]);
-      }
-      rxstate = 0;
-    }
+  //   if (rxstate == 2)
+  //   {
+  //     PDM_Filter (&pdmRxBuf[64], &MidBuffer[0], &PDM1_filter_handler);
+  //     for (int i = 0; i < 32; i++)
+  //     {
+  //       FifoWrite (MidBuffer[i]);
+  //     }
+  //     rxstate = 0;
+  //   }
 
-    if (txstate == 1)
-    {
-      if (fifo_read_enabled == 1)
-      {
-        for (int i = 0; i < 64; i = i + 2)
-        {
-          int16_t data = FifoRead ();
-          txBuf[i] = data;
-          txBuf[i + 1] = data;
-        }
-      }
-      txstate = 0;
-    }
+  //   if (txstate == 1)
+  //   {
+  //     if (fifo_read_enabled == 1)
+  //     {
+  //       for (int i = 0; i < 64; i = i + 2)
+  //       {
+  //         int16_t data = FifoRead ();
+  //         txBuf[i] = data;
+  //         txBuf[i + 1] = data;
+  //       }
+  //     }
+  //     txstate = 0;
+  //   }
 
-    if (txstate == 2)
-    {
-      if (fifo_read_enabled == 1)
-      {
-        for (int i = 64; i < 128; i = i + 2)
-        {
-          int16_t data = FifoRead ();
-          txBuf[i] = data;
-          txBuf[i + 1] = data;
-        }
-      }
-      txstate = 0;
-    }
+  //   if (txstate == 2)
+  //   {
+  //     if (fifo_read_enabled == 1)
+  //     {
+  //       for (int i = 64; i < 128; i = i + 2)
+  //       {
+  //         int16_t data = FifoRead ();
+  //         txBuf[i] = data;
+  //         txBuf[i + 1] = data;
+  //       }
+  //     }
+  //     txstate = 0;
+  //   }
   }
   /* USER CODE END 3 */
 }
@@ -504,7 +481,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, LD4_Pin|LD3_Pin|LD5_Pin|LD6_Pin
-                          |Audio_RST_Pin, GPIO_PIN_RESET);
+                          |CS43L22_RESET_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : CS_I2C_SPI_Pin */
   GPIO_InitStruct.Pin = CS_I2C_SPI_Pin;
@@ -533,9 +510,9 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(BOOT1_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LD4_Pin LD3_Pin LD5_Pin LD6_Pin
-                           Audio_RST_Pin */
+                           CS43L22_RESET_Pin */
   GPIO_InitStruct.Pin = LD4_Pin|LD3_Pin|LD5_Pin|LD6_Pin
-                          |Audio_RST_Pin;
+                          |CS43L22_RESET_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -572,24 +549,14 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_I2S_TxHalfCpltCallback (I2S_HandleTypeDef *hi2s)
-{
-  txstate = 1;
-}
-
-void HAL_I2S_TxCpltCallback (I2S_HandleTypeDef *hi2s)
-{
-  txstate = 2;
-}
 
 void HAL_I2S_RxHalfCpltCallback (I2S_HandleTypeDef *hi2s)
 {
-  rxstate = 1;
 }
 
 void HAL_I2S_RxCpltCallback (I2S_HandleTypeDef *hi2s)
 {
-  rxstate = 2;
+	 cs43l22_play((int16_t *)buffer_audio, 2 * BUFFER_LENGTH);
 }
 /* USER CODE END 4 */
 
